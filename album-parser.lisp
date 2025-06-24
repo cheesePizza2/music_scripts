@@ -34,6 +34,28 @@
                title-scan
                7 (1- (length title-scan)))))))
 
+(defun defang-filenames (outdir)
+  "Given an output dir, rename files to be more friendly (e.g. no brackets)."
+  (labels ((correct-name (name)
+             (map 'string (lambda (char)
+                            (cond ((equal char #\[) #\()
+                                  ((equal char #\]) #\))
+                                  (t char)))
+                  ;; pesky slashes in filename!!
+                  (remove #\\ name))))
+    (mapcan (lambda (file)
+              (let* ((old-name (remove #\\ (namestring file)))
+                     (new-name (correct-name old-name)))
+                (unless (string-equal old-name new-name)
+                  (uiop:run-program (format nil "mv \"~d\" \"~d\"" old-name new-name)))))
+            (uiop:directory-files outdir))))
+
+(defun import-cover-to-album-output (image new-dir)
+  "Given an image and a directory of output .flac files, import the image into each output's metadata."
+  (mapcan (lambda (song)
+            (uiop:run-program (format nil "metaflac --import-picture-from=\"~d\" \"~d\"" image song)))
+          (uiop:directory-files new-dir)))
+
 (defun parse-album (album-dir new-base &optional (audio-file-type "flac"))
   "Given an album directory (one cue, one flac, and a cover), parse into a new directory with flacs for each song."
   (let* ((cue (get-file-of-type album-dir "cue"))
@@ -43,9 +65,11 @@
                                    new-base)))
     (ensure-directories-exist new-dir)
     (uiop:run-program (format nil "shnsplit -f \"~d\" -o flac -t \"%n - %t\" -d \"~d\" \"~d\"" cue new-dir audio-file))
+    (uiop:delete-file-if-exists (merge-pathnames new-dir "00 - pregap.flac"))
+    (defang-filenames new-dir)
     ;; cuetag is finnicky so we use a format directive to grab each outputted file individually, e.g. "01 - song" "02 - other song"
     (uiop:run-program (format nil "cuetag \"~d\" ~{\"~a\"~^ ~}" cue (uiop:directory-files new-dir)))
-    (when image (uiop:run-program (format nil "metaflac --import-picture-from=\"~d\" \"~d\"" image (merge-pathnames "*" new-dir))))))
+    (when image (import-cover-to-album-output image new-dir))))
 
 (defun parse-albums (base new &optional (audio-file-type "flac"))
   "Given a directory containing albums (ie Band/Album/Music.flac), converts .cue and .flac albums into .flac files for each song."
